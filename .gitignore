@@ -1,7 +1,7 @@
-.venv/
-__pycache__/
-uploads/
-outputs/
-*.pyc
-.DS_Store
-
+streamlit
+basic-pitch==0.4.0
+music21
+pretty_midi
+pydub
+ffmpeg-python
+yt-dlp
