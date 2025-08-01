@@ -4,9 +4,12 @@ import uuid
 import shutil
 import tempfile
 
-from basic_pitch.inference import predict_and_save, load_model
+from basic_pitch.inference import predict_and_save
+from basic_pitch.constants import MODEL_PATH
 from pydub import AudioSegment
 import yt_dlp
+
+from music21 import converter
 
 # --- CONFIG -------------------------------------------------------
 UPLOAD_DIR = "uploads"
@@ -16,8 +19,8 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # --- APP UI -------------------------------------------------------
-st.title("🎹 AI Piano Arranger")
-st.write("Upload an MP3/WAV file or paste a YouTube link to generate a solo piano MIDI.")
+st.title("🎹 AI Piano Arranger + Sheet Music Generator")
+st.write("Upload an MP3/WAV file or paste a YouTube link to generate solo piano sheet music and MIDI.")
 
 youtube_url = st.text_input("🎬 Paste YouTube link (optional)")
 uploaded_file = st.file_uploader("Or upload an audio file", type=["mp3", "wav"])
@@ -45,7 +48,7 @@ def download_youtube_audio(url: str) -> str:
 
     return output_path
 
-# --- HANDLE AUDIO INPUT -------------------------------------------
+# --- AUDIO INPUT HANDLING -----------------------------------------
 if youtube_url:
     st.info("⏬ Downloading audio from YouTube...")
     try:
@@ -70,31 +73,45 @@ elif uploaded_file:
 
     st.success("✅ File uploaded and converted to WAV")
 
-# --- TRANSCRIPTION ------------------------------------------------
+# --- TRANSCRIPTION + PDF ------------------------------------------
 if input_path:
     midi_output_path = os.path.join(OUTPUT_DIR, f"{uuid.uuid4()}.mid")
-    model = load_model()
+    pdf_output_path = midi_output_path.replace(".mid", ".pdf")
 
-    with st.spinner("🎼 Transcribing audio to MIDI..."):
+    with st.spinner("🎼 Transcribing to MIDI..."):
         predict_and_save(
             [input_path],
             output_directory=OUTPUT_DIR,
-            model_or_model_path=model,
+            model_or_model_path=MODEL_PATH,
             save_midi=True,
             save_model_outputs=False,
             save_notes=False,
             sonify_midi=False,
         )
 
-        # Rename the output MIDI to a predictable name
+        # Rename output MIDI file
         for file in os.listdir(OUTPUT_DIR):
             if file.endswith(".mid") and "basic_pitch" in file:
                 os.rename(os.path.join(OUTPUT_DIR, file), midi_output_path)
 
-    st.success("🎉 Transcription complete!")
+    st.success("✅ MIDI transcription complete!")
 
+    # Generate PDF with music21
+    try:
+        st.spinner("🖨️ Converting MIDI to sheet music PDF...")
+        score = converter.parse(midi_output_path)
+        score.write("lily.pdf", fp=pdf_output_path)
+        st.success("📄 Sheet music PDF generated!")
+    except Exception as e:
+        st.error(f"❌ Failed to generate PDF: {e}")
+
+    # --- DOWNLOAD BUTTONS ------------------------------------------
     with open(midi_output_path, "rb") as f:
-        st.download_button("🎹 Download MIDI", f, file_name="piano_arrangement.mid")
+        st.download_button("🎧 Download MIDI", f, file_name="arrangement.mid")
+
+    if os.path.exists(pdf_output_path):
+        with open(pdf_output_path, "rb") as f:
+            st.download_button("📄 Download Sheet Music PDF", f, file_name="arrangement.pdf")
 
     if st.button("♻️ Clear session"):
         shutil.rmtree(UPLOAD_DIR)
