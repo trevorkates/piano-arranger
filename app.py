@@ -76,14 +76,19 @@ if input_path:
     midi_output_path = os.path.join(OUTPUT_DIR, f"{uuid.uuid4()}.mid")
 
     with st.spinner("🎼 Transcribing audio to piano MIDI..."):
+        
+        from basic_pitch.constants import MODEL_PATH
+
         predict_and_save(
             [input_path],
             output_directory=OUTPUT_DIR,
+            model_or_model_path=MODEL_PATH,
             save_midi=True,
             save_model_outputs=False,
+            save_notes=False,
             sonify_midi=False,
         )
-
+    
         # Rename Basic Pitch's default filename
         for file in os.listdir(OUTPUT_DIR):
             if file.endswith(".mid") and "basic_pitch" in file:
