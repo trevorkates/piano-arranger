@@ -3,12 +3,10 @@ import os
 import uuid
 import shutil
 import tempfile
-
+import basic_pitch
 from basic_pitch.inference import predict_and_save
-from basic_pitch.model import load_model
 from pydub import AudioSegment
 import yt_dlp
-
 from music21 import converter
 
 # --- CONFIG -------------------------------------------------------
@@ -17,6 +15,9 @@ OUTPUT_DIR = "outputs"
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# fallback: locate model file directly
+MODEL_PATH = os.path.join(basic_pitch.__path__[0], "model", "basic_pitch.pt")
 
 # --- APP UI -------------------------------------------------------
 st.title("🎹 AI Piano Arranger + Sheet Music Generator")
@@ -77,20 +78,18 @@ elif uploaded_file:
 if input_path:
     midi_output_path = os.path.join(OUTPUT_DIR, f"{uuid.uuid4()}.mid")
     pdf_output_path = midi_output_path.replace(".mid", ".pdf")
-    model = load_model()
 
     with st.spinner("🎼 Transcribing to MIDI..."):
         predict_and_save(
             [input_path],
             output_directory=OUTPUT_DIR,
-            model_or_model_path=model,
+            model_or_model_path=MODEL_PATH,
             save_midi=True,
             save_model_outputs=False,
             save_notes=False,
             sonify_midi=False,
         )
 
-        # Rename output MIDI file
         for file in os.listdir(OUTPUT_DIR):
             if file.endswith(".mid") and "basic_pitch" in file:
                 os.rename(os.path.join(OUTPUT_DIR, file), midi_output_path)
@@ -106,7 +105,6 @@ if input_path:
     except Exception as e:
         st.error(f"❌ Failed to generate PDF: {e}")
 
-    # --- DOWNLOAD BUTTONS ------------------------------------------
     with open(midi_output_path, "rb") as f:
         st.download_button("🎧 Download MIDI", f, file_name="arrangement.mid")
 
