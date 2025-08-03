@@ -1,6 +1,7 @@
 import os
 import uuid
 import json
+import inspect
 from pathlib import Path
 
 import streamlit as st
@@ -8,16 +9,54 @@ from pydub import AudioSegment
 import yt_dlp
 from music21 import converter
 
-# basic-pitch: use predict (returns model_output, midi_data, note_events)
+# Attempt flexible import of basic-pitch prediction functions.
+PREDICT_FN = None
+PREDICT_AND_SAVE_FN = None
+IMPORT_ERROR = None
 try:
-    from basic_pitch.inference import predict
-    BASIC_PITCH_AVAILABLE = True
-except ImportError as e:
-    predict = None  # type: ignore
-    BASIC_PITCH_AVAILABLE = False
-    IMPORT_ERROR = e  # for messaging
+    from basic_pitch.inference import predict, predict_and_save
 
-# Directories
+    PREDICT_FN = predict
+    PREDICT_AND_SAVE_FN = predict_and_save
+except ImportError as e:
+    # Try individually in case one exists
+    try:
+        from basic_pitch.inference import predict_and_save
+
+        PREDICT_AND_SAVE_FN = predict_and_save
+    except Exception:
+        pass
+    try:
+        from basic_pitch.inference import predict
+
+        PREDICT_FN = predict
+    except Exception:
+        pass
+    IMPORT_ERROR = e
+except Exception as e:
+    IMPORT_ERROR = e
+
+# Helper to normalize numpy / non-serializable objects to pure Python for JSON.
+def make_json_serializable(obj):
+    try:
+        import numpy as _np
+    except ImportError:
+        _np = None
+
+    if _np and isinstance(obj, _np.integer):
+        return int(obj)
+    if _np and isinstance(obj, _np.floating):
+        return float(obj)
+    if _np and _np and isinstance(obj, _np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, dict):
+        return {make_json_serializable(k): make_json_serializable(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [make_json_serializable(i) for i in obj]
+    return obj
+
+
+# Setup folders
 UPLOADS = Path("uploads")
 OUTPUTS = Path("outputs")
 for d in (UPLOADS, OUTPUTS):
@@ -87,58 +126,67 @@ if audio_path:
     musicxml_path = OUTPUTS / f"{uid}.musicxml"
     note_events_json = OUTPUTS / f"{uid}_note_events.json"
 
-    if not BASIC_PITCH_AVAILABLE:
+    # Report import failure if no functionality available
+    if IMPORT_ERROR and not (PREDICT_FN or PREDICT_AND_SAVE_FN):
         st.error(f"Failed to import basic-pitch: {IMPORT_ERROR}")
         st.info(
-            "basic-pitch needs a backend capable of loading its model (CoreML on macOS, TensorFlow, ONNX, or tflite). "
-            "Install e.g. `pip install 'basic-pitch[coreml]'` on macOS or `pip install 'basic-pitch[tf]'` if TensorFlow compatible."
+            "basic-pitch needs a backend capable of loading its model (CoreML on macOS, ONNX, TensorFlow, or tflite-runtime). "
+            "Install the appropriate extra, e.g., `pip install 'basic-pitch[coreml]'` on macOS or `basic-pitch[tf]` if using a compatible TensorFlow."
         )
         midi_out = None
     else:
         try:
-            # Call predict; signature is predict(audio_path, model_or_model_path=None) in many versions
-            result = predict(str(audio_path))
-            # expect (model_output, midi_data, note_events)
-            if isinstance(result, tuple):
-                if len(result) >= 3:
+            if PREDICT_AND_SAVE_FN:
+                sig = inspect.signature(PREDICT_AND_SAVE_FN)
+                params = list(sig.parameters.keys())
+
+                # Many versions expect (audio_path, save_midi, save_notes, model_or_model_path)
+                if "save_midi" in params and "save_notes" in params:
+                    PREDICT_AND_SAVE_FN(str(audio_path), str(midi_out), str(note_events_json), None)
+                    st.success("🎼 MIDI generated via predict_and_save (classic signature).")
+                # Some newer may rename model outputs; fallback still call same
+                else:
+                    PREDICT_AND_SAVE_FN(str(audio_path), str(midi_out), str(note_events_json), None)
+                    st.success("🎼 MIDI generated via predict_and_save (fallback).")
+            elif PREDICT_FN:
+                result = PREDICT_FN(str(audio_path), None)
+                # Unpack safely
+                if isinstance(result, tuple) and len(result) >= 3:
                     model_output, midi_data, note_events = result[0], result[1], result[2]
                 else:
-                    st.warning("Unexpected return shape from basic_pitch.predict; attempting best-effort unpack.")
                     model_output, midi_data, note_events = result
+                # Write MIDI:
+                if hasattr(midi_data, "write"):
+                    midi_data.write(str(midi_out))
+                else:
+                    with open(midi_out, "wb") as f:
+                        f.write(midi_data)
+                # Normalize note events for JSON
+                sanitized = make_json_serializable(note_events)
+                with open(note_events_json, "w") as f:
+                    json.dump(sanitized, f, indent=2)
+                st.success("🎼 MIDI generated via predict().")
             else:
-                raise RuntimeError("basic_pitch.predict returned non-tuple result.")
-
-            # Write MIDI
-            if hasattr(midi_data, "write"):
-                midi_data.write(str(midi_out))
-            else:
-                with open(midi_out, "wb") as f:
-                    f.write(midi_data)
-
-            # Write note events JSON if available
-            with open(note_events_json, "w") as f:
-                json.dump(note_events, f, indent=2)
-
-            st.success("🎼 MIDI generated via basic_pitch.predict().")
+                raise RuntimeError("No usable basic-pitch prediction function found.")
         except Exception as e:
             st.error(f"❌ Error generating MIDI / prediction: {e}")
             st.info(
-                "Hint: basic-pitch needs a working model backend. On macOS install the CoreML extra (`pip install 'basic-pitch[coreml]'`). "
-                "Alternatively, use a Python environment with a compatible TensorFlow or ONNX runtime installed."
+                "Hint: basic-pitch needs a working model backend. If you see errors about loading None or unsupported formats, install one of the extras "
+                "(e.g., `pip install 'basic-pitch[coreml]'` on macOS to get CoreML support, or use a compatible TensorFlow backend)."
             )
             midi_out = None
 
-    # Convert MIDI to MusicXML
-    if midi_out and midi_out.exists():
-        try:
-            score = converter.parse(str(midi_out))
-            score.write("musicxml", fp=str(musicxml_path))
-            st.success("✅ Sheet music exported as MusicXML.")
-        except Exception as e:
-            st.error(f"❌ Error converting MIDI to MusicXML: {e}")
-            musicxml_path = None
+        # Convert to MusicXML if MIDI exists
+        if midi_out and midi_out.exists():
+            try:
+                score = converter.parse(str(midi_out))
+                score.write("musicxml", fp=str(musicxml_path))
+                st.success("✅ Sheet music exported as MusicXML.")
+            except Exception as e:
+                st.error(f"❌ Error converting MIDI to MusicXML: {e}")
+                musicxml_path = None
 
-    # Downloads
+    # Downloads UI
     st.subheader("Downloads")
     cols = st.columns(4)
     if audio_path.exists():
@@ -177,7 +225,7 @@ if audio_path:
     st.markdown(
         """
 **Next steps / notes:**  
-- To get **PDF sheet music**, open the `.musicxml` in MuseScore or use the CLI:  
+- To get **PDF sheet music**, open the `.musicxml` in MuseScore or via CLI:  
 ```sh
 musescore score.musicxml -o sheet.pdf
         """
