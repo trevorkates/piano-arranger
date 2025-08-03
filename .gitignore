@@ -1,42 +1,24 @@
-# Python artifacts
-__pycache__/
+#Python artifacts
+pycache/
 *.py[cod]
 *.egg-info/
 *.egg
 .Python
-*.pkl
-
-# Virtual environments
 env/
 .venv/
 venv/
-*.env
-.env.local
-.env.*.local
+*.pkl
 
-# Build / packaging
-*.whl
-*.tar.gz
-
-# Test / tooling caches
-.pytest_cache/
-.mypy_cache/
-.coverage
-htmlcov/
-
-# Streamlit state
-.streamlit/
-
-# OS
+#OS
 .DS_Store
 
-# Output / uploads (generated content)
+#Virtual envs / env files
+*.env
+
+#Output / uploads
 uploads/
 outputs/
 
-# Logs
-*.log
-
-# Editor / IDE
+#Editors/IDE
 .vscode/
 .idea/
