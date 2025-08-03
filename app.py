@@ -188,3 +188,5 @@ if audio_path:
 - To get **PDF sheet music**, open the `.musicxml` in MuseScore or via CLI:  
 ```sh
 musescore score.musicxml -o sheet.pdf
+        """
+    )
