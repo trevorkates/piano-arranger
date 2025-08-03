@@ -1,3 +1,19 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.Python
+*.pkl
+
+# Virtual environments
+env/
+.venv/
+venv/
+*.env
+.env.local
+.env.*.local
+
 # Build / packaging
 *.whl
 *.tar.gz
@@ -11,12 +27,16 @@ htmlcov/
 # Streamlit state
 .streamlit/
 
+# OS
+.DS_Store
+
+# Output / uploads (generated content)
+uploads/
+outputs/
+
 # Logs
 *.log
 
-# Sensitive local config
-.env.local
-.env.*.local
-
-# Music21 cache (if it creates one)
-# (optional; depends on your usage)
+# Editor / IDE
+.vscode/
+.idea/
