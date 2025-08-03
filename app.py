@@ -39,7 +39,6 @@ if input_type == "Upload File":
                 OUTPUT_FOLDER,
                 sonify_midi=False,
                 save_model_outputs=False,
-                save_note_events=True,
             )
 
         midi_path = os.path.join(OUTPUT_FOLDER, f"{unique_id}.mid")
@@ -77,7 +76,7 @@ elif input_type == "YouTube Link":
                 ydl.download([url])
 
             if not os.path.exists(output_path):
-                # Handle case where yt_dlp saved as .mp3.mp3
+                # Handle mp3.mp3 case
                 alt_path = output_path + ".mp3"
                 if os.path.exists(alt_path):
                     os.rename(alt_path, output_path)
@@ -91,7 +90,6 @@ elif input_type == "YouTube Link":
                     OUTPUT_FOLDER,
                     sonify_midi=False,
                     save_model_outputs=False,
-                    save_note_events=True,
                 )
 
             midi_path = os.path.join(OUTPUT_FOLDER, f"{unique_id}.mid")
