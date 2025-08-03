@@ -1,15 +1,24 @@
-# Python
+# Python artifacts
 __pycache__/
 *.py[cod]
 *.egg-info/
-.venv/
+*.egg
+.Python
 env/
-*.so
+.venv/
+venv/
+*.pkl
 
-# Streamlit uploads/outputs
+# OS
+.DS_Store
+
+# Virtual envs
+*.env
+
+# Output / uploads
 uploads/
 outputs/
 
-# VSCode / macOS
+# Editor
 .vscode/
-.DS_Store
+.idea/
