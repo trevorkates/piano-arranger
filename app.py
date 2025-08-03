@@ -1,5 +1,6 @@
+import os
 import uuid
-import shutil
+import json
 from pathlib import Path
 
 import streamlit as st
@@ -7,8 +8,14 @@ from pydub import AudioSegment
 import yt_dlp
 from music21 import converter
 
-# basic-pitch (CoreML backend assumed)
-from basic_pitch.inference import predict_and_save
+# basic-pitch: use predict (returns model_output, midi_data, note_events)
+try:
+    from basic_pitch.inference import predict
+    BASIC_PITCH_AVAILABLE = True
+except ImportError as e:
+    predict = None  # type: ignore
+    BASIC_PITCH_AVAILABLE = False
+    IMPORT_ERROR = e  # for messaging
 
 # Directories
 UPLOADS = Path("uploads")
@@ -21,7 +28,8 @@ st.title("🎹 AI Piano Arranger")
 st.write("Upload a short audio file or paste a YouTube link. We'll generate a solo piano arrangement as sheet music!")
 
 input_type = st.radio("Select input type:", ["Upload File", "YouTube Link"])
-audio_path = None
+
+audio_path: Path | None = None
 
 if input_type == "Upload File":
     uploaded = st.file_uploader("Upload audio (WAV/MP3/etc.)", type=["wav", "mp3", "m4a", "flac", "ogg"])
@@ -44,6 +52,7 @@ elif input_type == "YouTube Link":
                 "outtmpl": str(UPLOADS / f"{uid}.%(ext)s"),
                 "quiet": True,
                 "no_warnings": True,
+                "skip_download": False,
                 "postprocessors": [
                     {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}
                 ],
@@ -75,50 +84,100 @@ if audio_path:
 
     uid = audio_path.stem.split("_")[0]
     midi_out = OUTPUTS / f"{uid}.midi"
-    musicxml_out = OUTPUTS / f"{uid}.musicxml"
+    musicxml_path = OUTPUTS / f"{uid}.musicxml"
     note_events_json = OUTPUTS / f"{uid}_note_events.json"
 
-    try:
-        # Use basic-pitch's predict_and_save; omit model path to use bundled default.
-        # Signature (as of 0.4.0): predict_and_save(audio_path, save_midi, save_notes, model_or_model_path)
-        predict_and_save(str(audio_path), str(midi_out), str(note_events_json), None)
-        st.success("🎼 MIDI generated.")
-    except Exception as e:
-        st.error(f"❌ Error generating MIDI / prediction: {e}")
+    if not BASIC_PITCH_AVAILABLE:
+        st.error(f"Failed to import basic-pitch: {IMPORT_ERROR}")
         st.info(
-            "Hint: basic-pitch needs a working model backend. On macOS this uses CoreML; ensure you installed with the extra "
-            "`basic-pitch[coreml]` so the CoreML runtime is present."
+            "basic-pitch needs a backend capable of loading its model (CoreML on macOS, TensorFlow, ONNX, or tflite). "
+            "Install e.g. `pip install 'basic-pitch[coreml]'` on macOS or `pip install 'basic-pitch[tf]'` if TensorFlow compatible."
         )
         midi_out = None
+    else:
+        try:
+            # Call predict; signature is predict(audio_path, model_or_model_path=None) in many versions
+            result = predict(str(audio_path))
+            # expect (model_output, midi_data, note_events)
+            if isinstance(result, tuple):
+                if len(result) >= 3:
+                    model_output, midi_data, note_events = result[0], result[1], result[2]
+                else:
+                    st.warning("Unexpected return shape from basic_pitch.predict; attempting best-effort unpack.")
+                    model_output, midi_data, note_events = result
+            else:
+                raise RuntimeError("basic_pitch.predict returned non-tuple result.")
 
+            # Write MIDI
+            if hasattr(midi_data, "write"):
+                midi_data.write(str(midi_out))
+            else:
+                with open(midi_out, "wb") as f:
+                    f.write(midi_data)
+
+            # Write note events JSON if available
+            with open(note_events_json, "w") as f:
+                json.dump(note_events, f, indent=2)
+
+            st.success("🎼 MIDI generated via basic_pitch.predict().")
+        except Exception as e:
+            st.error(f"❌ Error generating MIDI / prediction: {e}")
+            st.info(
+                "Hint: basic-pitch needs a working model backend. On macOS install the CoreML extra (`pip install 'basic-pitch[coreml]'`). "
+                "Alternatively, use a Python environment with a compatible TensorFlow or ONNX runtime installed."
+            )
+            midi_out = None
+
+    # Convert MIDI to MusicXML
     if midi_out and midi_out.exists():
         try:
             score = converter.parse(str(midi_out))
-            score.write("musicxml", fp=str(musicxml_out))
+            score.write("musicxml", fp=str(musicxml_path))
             st.success("✅ Sheet music exported as MusicXML.")
         except Exception as e:
             st.error(f"❌ Error converting MIDI to MusicXML: {e}")
-            musicxml_out = None
+            musicxml_path = None
 
+    # Downloads
     st.subheader("Downloads")
     cols = st.columns(4)
     if audio_path.exists():
         with cols[0]:
-            st.download_button("Download trimmed audio", data=open(audio_path, "rb"), file_name=audio_path.name, mime="audio/wav")
+            st.download_button(
+                "Download trimmed audio",
+                data=open(audio_path, "rb"),
+                file_name=audio_path.name,
+                mime="audio/wav",
+            )
     if midi_out and midi_out.exists():
         with cols[1]:
-            st.download_button("Download MIDI", data=open(midi_out, "rb"), file_name=midi_out.name, mime="audio/midi")
-    if musicxml_out and musicxml_out.exists():
+            st.download_button(
+                "Download MIDI",
+                data=open(midi_out, "rb"),
+                file_name=midi_out.name,
+                mime="audio/midi",
+            )
+    if musicxml_path and musicxml_path.exists():
         with cols[2]:
-            st.download_button("Download MusicXML", data=open(musicxml_out, "rb"), file_name=musicxml_out.name, mime="application/xml")
+            st.download_button(
+                "Download MusicXML",
+                data=open(musicxml_path, "rb"),
+                file_name=musicxml_path.name,
+                mime="application/xml",
+            )
     if note_events_json.exists():
         with cols[3]:
-            st.download_button("Download note events (JSON)", data=open(note_events_json, "rb"), file_name=note_events_json.name, mime="application/json")
+            st.download_button(
+                "Download note events (JSON)",
+                data=open(note_events_json, "rb"),
+                file_name=note_events_json.name,
+                mime="application/json",
+            )
 
     st.markdown(
         """
 **Next steps / notes:**  
-- To get **PDF sheet music**, open the `.musicxml` in MuseScore or convert via CLI:  
+- To get **PDF sheet music**, open the `.musicxml` in MuseScore or use the CLI:  
 ```sh
 musescore score.musicxml -o sheet.pdf
         """
