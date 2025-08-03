@@ -1,7 +1,6 @@
 import os
 import uuid
 import json
-import inspect
 from pathlib import Path
 
 import streamlit as st
@@ -9,7 +8,7 @@ from pydub import AudioSegment
 import yt_dlp
 from music21 import converter
 
-# Attempt to import basic-pitch functions flexibly.
+# Try to import basic-pitch prediction functions
 PREDICT_FN = None
 PREDICT_AND_SAVE_FN = None
 IMPORT_ERROR = None
@@ -19,23 +18,24 @@ try:
     PREDICT_FN = predict
     PREDICT_AND_SAVE_FN = predict_and_save
 except ImportError as e:
-    # Could not import one or both
-    try:
-        from basic_pitch.inference import predict_and_save
-
-        PREDICT_AND_SAVE_FN = predict_and_save
-    except Exception:
-        IMPORT_ERROR = e
+    # try fallbacks individually
     try:
         from basic_pitch.inference import predict
 
         PREDICT_FN = predict
     except Exception:
         pass
+    try:
+        from basic_pitch.inference import predict_and_save
+
+        PREDICT_AND_SAVE_FN = predict_and_save
+    except Exception:
+        pass
+    IMPORT_ERROR = e
 except Exception as e:
     IMPORT_ERROR = e
 
-# Setup folders
+# Directories
 UPLOADS = Path("uploads")
 OUTPUTS = Path("outputs")
 for d in (UPLOADS, OUTPUTS):
@@ -70,7 +70,6 @@ elif input_type == "YouTube Link":
                 "outtmpl": str(UPLOADS / f"{uid}.%(ext)s"),
                 "quiet": True,
                 "no_warnings": True,
-                "skip_download": False,
                 "postprocessors": [
                     {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}
                 ],
@@ -85,7 +84,7 @@ elif input_type == "YouTube Link":
                     raise FileNotFoundError(f"Expected downloaded file {audio_raw} missing")
             st.success("✅ Downloaded. Trimming to first 30 seconds...")
             audio = AudioSegment.from_file(audio_raw)
-            trimmed = audio[:30 * 1000]
+            trimmed = audio[:30 * 1000]  # first 30s
             trimmed_path = UPLOADS / f"{uid}_trimmed.wav"
             trimmed.export(trimmed_path, format="wav")
             audio_path = trimmed_path
@@ -105,62 +104,61 @@ if audio_path:
     musicxml_path = OUTPUTS / f"{uid}.musicxml"
     note_events_json = OUTPUTS / f"{uid}_note_events.json"
 
-    # If import failure
-    if IMPORT_ERROR and not (PREDICT_FN or PREDICT_AND_SAVE_FN):
-        st.error(f"Failed to import basic-pitch: {IMPORT_ERROR}")
+    # Check import
+    if not (PREDICT_FN or PREDICT_AND_SAVE_FN):
+        st.error(f"Failed to import basic-pitch properly. {IMPORT_ERROR}")
         st.info(
-            "basic-pitch needs a backend capable of loading its model (TensorFlow, ONNX, CoreML, or tflite-runtime). "
-            "Install e.g. `pip install 'basic-pitch[tf]'` on a compatible Python or ensure ONNX/CoreML runtimes are present."
+            "basic-pitch needs a backend/model. Install a backend, e.g.:\n"
+            "`pip install 'basic-pitch[tf]'` (with a compatible TensorFlow) or ensure ONNX/CoreML runtimes are installed."
         )
+        midi_out = None
     else:
         try:
-            # Prefer predict_and_save if available
-            if PREDICT_AND_SAVE_FN:
-                sig = inspect.signature(PREDICT_AND_SAVE_FN)
-                params = list(sig.parameters.keys())
-
-                # Heuristic dispatch based on parameter names
-                if "save_midi" in params and "save_notes" in params and "model_or_model_path" in params:
-                    # old style
-                    PREDICT_AND_SAVE_FN(str(audio_path), str(midi_out), str(note_events_json), None)
-                    st.success("🎼 MIDI generated via predict_and_save (old signature).")
-                elif "save_model_outputs" in params and "save_notes" in params and "model_or_model_path" in params:
-                    # new/renamed signature: assume first arg is audio, second is model outputs (we give midi), third is notes, fourth model
-                    PREDICT_AND_SAVE_FN(str(audio_path), str(midi_out), str(note_events_json), None)
-                    st.success("🎼 MIDI generated via predict_and_save (new-ish signature).")
-                else:
-                    # Fallback: try calling with 4 positional and hope for the best
-                    PREDICT_AND_SAVE_FN(str(audio_path), str(midi_out), str(note_events_json), None)
-                    st.success("🎼 MIDI generated via predict_and_save (fallback).")
-                # note events file may or may not have been written; MIDI might be somewhere—assume midi_out.
-            elif PREDICT_FN:
-                # predict returns (model_output, midi_data, note_events)
+            # Prefer direct predict() since its return value structure is stable
+            if PREDICT_FN:
                 result = PREDICT_FN(str(audio_path), None)
+                # expect (model_output, midi_data, note_events)
                 if isinstance(result, tuple) and len(result) >= 3:
                     _, midi_data, note_events = result[0], result[1], result[2]
                 else:
-                    # Some versions might differ; try unpacking safely
+                    # fallback to unpack
                     model_output, midi_data, note_events = result
-                # Write MIDI if object has write, else assume bytes
+                # Save MIDI
                 if hasattr(midi_data, "write"):
+                    # e.g., pretty_midi.PrettyMIDI
                     midi_data.write(str(midi_out))
                 else:
                     with open(midi_out, "wb") as f:
                         f.write(midi_data)
+                # Save note events JSON if present
                 with open(note_events_json, "w") as f:
                     json.dump(note_events, f, indent=2)
                 st.success("🎼 MIDI generated via predict().")
             else:
-                raise RuntimeError("No usable basic-pitch prediction function found.")
+                # Fallback to predict_and_save; try to infer signature
+                import inspect
+
+                sig = inspect.signature(PREDICT_AND_SAVE_FN)
+                params = list(sig.parameters.keys())
+                # heuristically supply save_midi and save_notes if expected
+                if "save_midi" in params and "save_notes" in params:
+                    # old-style: (audio_path, save_midi, save_notes, model_or_model_path)
+                    PREDICT_AND_SAVE_FN(str(audio_path), str(midi_out), str(note_events_json), None)
+                elif "save_model_outputs" in params and "save_notes" in params:
+                    # try analogous
+                    PREDICT_AND_SAVE_FN(str(audio_path), str(midi_out), str(note_events_json), None)
+                else:
+                    # fallback: naive
+                    PREDICT_AND_SAVE_FN(str(audio_path), str(midi_out), str(note_events_json), None)
+                st.success("🎼 MIDI generated via predict_and_save().")
         except Exception as e:
             st.error(f"❌ Error generating MIDI / prediction: {e}")
             st.info(
-                "Hint: basic-pitch needs a model backend. If you see errors about loading None or unsupported model formats, install one: "
-                "`pip install 'basic-pitch[tf]'` (with compatible TensorFlow) or ensure ONNX/CoreML runtimes are present."
+                "Hint: basic-pitch needs a working model backend. If it complains about loading None or unsupported formats, install the appropriate extras (e.g., `basic-pitch[tf]` with a supported TensorFlow)."
             )
             midi_out = None
 
-        # Convert MIDI -> MusicXML
+        # Convert to MusicXML if MIDI exists
         if midi_out and midi_out.exists():
             try:
                 score = converter.parse(str(midi_out))
@@ -170,7 +168,7 @@ if audio_path:
                 st.error(f"❌ Error converting MIDI to MusicXML: {e}")
                 musicxml_path = None
 
-    # Downloads UI
+    # Downloads
     st.subheader("Downloads")
     cols = st.columns(4)
     if audio_path.exists():
