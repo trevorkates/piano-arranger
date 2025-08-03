@@ -8,7 +8,13 @@ from pydub import AudioSegment
 import yt_dlp
 from music21 import converter
 
-from basic_pitch.inference import predict  # correct API
+try:
+    from basic_pitch.inference import predict  # correct API
+except ImportError as e:
+    predict = None
+    PREDICT_IMPORT_ERROR = e
+else:
+    PREDICT_IMPORT_ERROR = None
 
 # Ensure output directories exist
 UPLOADS = Path("uploads")
@@ -51,9 +57,7 @@ elif input_type == "YouTube Link":
             }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
-                # base filename before postprocessing
                 raw_fname = ydl.prepare_filename(info)
-                # after FFmpegExtractAudio, extension is .mp3
                 if not raw_fname.lower().endswith(".mp3"):
                     raw_fname = str(Path(raw_fname).with_suffix(".mp3"))
                 audio_raw = Path(raw_fname)
@@ -65,7 +69,6 @@ elif input_type == "YouTube Link":
             trimmed_path = UPLOADS / f"{uid}_trimmed.wav"
             trimmed.export(trimmed_path, format="wav")
             audio_path = trimmed_path
-            # cleanup original downloaded if exists
             try:
                 audio_raw.unlink()
             except Exception:
@@ -78,18 +81,25 @@ elif input_type == "YouTube Link":
 if audio_path:
     st.success("✅ Audio ready. Generating sheet music...")
 
+    if PREDICT_IMPORT_ERROR:
+        st.error(f"Failed to import basic_pitch.predict: {PREDICT_IMPORT_ERROR}")
+        st.info(
+            "You need one of the supported backends installed (TensorFlow, ONNX, CoreML, or tflite-runtime) "
+            "and a compatible basic-pitch version. See README for environment recommendations."
+        )
     uid = audio_path.stem.split("_")[0]
     midi_out = OUTPUTS / f"{uid}.midi"
     musicxml_path = OUTPUTS / f"{uid}.musicxml"
     notes_json = OUTPUTS / f"{uid}_note_events.json"
 
     try:
-        # Call predict; second argument is model_or_model_path (None uses default)
+        if not predict:
+            raise RuntimeError("basic_pitch.predict is unavailable due to import failure.")
         model_output, midi_data, note_events = predict(str(audio_path), None)
         # Write MIDI file
         midi_data.write(str(midi_out))
         st.success("🎼 MIDI generated.")
-        # Save note events for inspection
+        # Save note events
         try:
             with open(notes_json, "w") as f:
                 json.dump(note_events, f, indent=2)
@@ -103,7 +113,6 @@ if audio_path:
         )
         midi_out = None
 
-    # Convert to MusicXML if MIDI exists
     if midi_out and midi_out.exists():
         try:
             score = converter.parse(str(midi_out))
@@ -152,7 +161,7 @@ if audio_path:
     st.markdown(
         """
 **Next steps / notes:**  
-- To get **PDF sheet music**, open the `.musicxml` in MuseScore or use LilyPond/musescore CLI.  
-  Example with MuseScore CLI:  
+- To get **PDF sheet music**, open the `.musicxml` in MuseScore or use the MuseScore CLI.  
+  Example:  
   ```sh
   musescore score.musicxml -o sheet.pdf
