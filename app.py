@@ -8,15 +8,26 @@ from pydub import AudioSegment
 import yt_dlp
 from music21 import converter
 
+# Try to import basic-pitch entrypoints, accommodating version differences.
+PREDICT_FN = None
+PREDICT_AND_SAVE_FN = None
+IMPORT_ERROR = None
 try:
-    from basic_pitch.inference import predict  # correct API
-except ImportError as e:
-    predict = None
-    PREDICT_IMPORT_ERROR = e
-else:
-    PREDICT_IMPORT_ERROR = None
+    from basic_pitch.inference import predict, predict_and_save  # newer / older variants
+    PREDICT_FN = predict
+    PREDICT_AND_SAVE_FN = predict_and_save
+except ImportError:
+    try:
+        from basic_pitch.inference import predict  # fallback if only predict exists
+        PREDICT_FN = predict
+    except ImportError as e:
+        IMPORT_ERROR = e
+        PREDICT_FN = None
+        PREDICT_AND_SAVE_FN = None
+except Exception as e:
+    IMPORT_ERROR = e
 
-# Ensure output directories exist
+# Ensure dirs
 UPLOADS = Path("uploads")
 OUTPUTS = Path("outputs")
 for d in (UPLOADS, OUTPUTS):
@@ -30,13 +41,13 @@ input_type = st.radio("Select input type:", ["Upload File", "YouTube Link"])
 
 audio_path: Path | None = None
 
-# === Input handling ===
+# Input
 if input_type == "Upload File":
     uploaded = st.file_uploader("Upload audio (WAV/MP3/etc.)", type=["wav", "mp3", "m4a", "flac", "ogg"])
     if uploaded:
-        file_ext = Path(uploaded.name).suffix.lower()
+        ext = Path(uploaded.name).suffix.lower()
         uid = str(uuid.uuid4())
-        dest = UPLOADS / f"{uid}{file_ext}"
+        dest = UPLOADS / f"{uid}{ext}"
         with open(dest, "wb") as f:
             f.write(uploaded.getbuffer())
         audio_path = dest
@@ -65,7 +76,7 @@ elif input_type == "YouTube Link":
                     raise FileNotFoundError(f"Expected downloaded file {audio_raw} missing")
             st.success("✅ Downloaded. Trimming to first 30 seconds...")
             audio = AudioSegment.from_file(audio_raw)
-            trimmed = audio[:30 * 1000]  # first 30 seconds
+            trimmed = audio[:30 * 1000]
             trimmed_path = UPLOADS / f"{uid}_trimmed.wav"
             trimmed.export(trimmed_path, format="wav")
             audio_path = trimmed_path
@@ -77,52 +88,59 @@ elif input_type == "YouTube Link":
             st.error(f"❌ Error downloading audio: {e}")
             audio_path = None
 
-# === Processing ===
+# Processing
 if audio_path:
     st.success("✅ Audio ready. Generating sheet music...")
 
-    if PREDICT_IMPORT_ERROR:
-        st.error(f"Failed to import basic_pitch.predict: {PREDICT_IMPORT_ERROR}")
-        st.info(
-            "You need one of the supported backends installed (TensorFlow, ONNX, CoreML, or tflite-runtime) "
-            "and a compatible basic-pitch version. See README for environment recommendations."
-        )
     uid = audio_path.stem.split("_")[0]
     midi_out = OUTPUTS / f"{uid}.midi"
     musicxml_path = OUTPUTS / f"{uid}.musicxml"
     notes_json = OUTPUTS / f"{uid}_note_events.json"
 
-    try:
-        if not predict:
-            raise RuntimeError("basic_pitch.predict is unavailable due to import failure.")
-        model_output, midi_data, note_events = predict(str(audio_path), None)
-        # Write MIDI file
-        midi_data.write(str(midi_out))
-        st.success("🎼 MIDI generated.")
-        # Save note events
-        try:
-            with open(notes_json, "w") as f:
-                json.dump(note_events, f, indent=2)
-        except Exception:
-            st.warning("Could not write note events JSON.")
-    except Exception as e:
-        st.error(f"❌ Error generating MIDI / prediction: {e}")
+    # Check availability
+    if IMPORT_ERROR:
+        st.error(f"Failed to import basic-pitch: {IMPORT_ERROR}")
         st.info(
-            "Hint: basic-pitch needs a supported model backend (CoreML, TFLite, ONNX, or TensorFlow). "
-            "Make sure the appropriate extras are installed and compatible with your platform."
+            "basic-pitch requires a supported model backend (TensorFlow, ONNX, CoreML, or tflite-runtime). "
+            "On Apple Silicon you may need `tensorflow-macos` + `tensorflow-metal` or install a compatible backend. "
+            "See documentation for installing `basic-pitch[tf]` or `basic-pitch[onnx]`."
         )
-        midi_out = None
-
-    if midi_out and midi_out.exists():
+    else:
         try:
-            score = converter.parse(str(midi_out))
-            score.write("musicxml", fp=str(musicxml_path))
-            st.success("✅ Sheet music exported as MusicXML.")
+            # Prefer predict_and_save if exists, else use predict
+            if PREDICT_AND_SAVE_FN:
+                # old signature: predict_and_save(audio_path, save_midi, save_notes, model_or_model_path)
+                PREDICT_AND_SAVE_FN(str(audio_path), str(midi_out), str(notes_json), None)
+                st.success("🎼 MIDI (and note events) generated via predict_and_save.")
+            elif PREDICT_FN:
+                model_output, midi_data, note_events = PREDICT_FN(str(audio_path), None)
+                # Write MIDI
+                midi_data.write(str(midi_out))
+                with open(notes_json, "w") as f:
+                    json.dump(note_events, f, indent=2)
+                st.success("🎼 MIDI generated via predict.")
+            else:
+                raise RuntimeError("No usable prediction function available.")
         except Exception as e:
-            st.error(f"❌ Error converting MIDI to MusicXML: {e}")
-            musicxml_path = None
+            st.error(f"❌ Error generating MIDI / prediction: {e}")
+            st.info(
+                "Hint: basic-pitch needs a backend capable of loading its model file. "
+                "If the error mentions inability to load `None`, install a backend: "
+                "`pip install 'basic-pitch[tf]'` (if TensorFlow compatible) or ensure ONNX/CoreML is properly installed."
+            )
+            midi_out = None
 
-    # === Downloads UI ===
+        # Convert to MusicXML if MIDI exists
+        if midi_out and midi_out.exists():
+            try:
+                score = converter.parse(str(midi_out))
+                score.write("musicxml", fp=str(musicxml_path))
+                st.success("✅ Sheet music exported as MusicXML.")
+            except Exception as e:
+                st.error(f"❌ Error converting MIDI to MusicXML: {e}")
+                musicxml_path = None
+
+    # Downloads
     st.subheader("Downloads")
     col1, col2, col3, col4 = st.columns(4)
     with col1:
@@ -161,9 +179,8 @@ if audio_path:
     st.markdown(
         """
 **Next steps / notes:**  
-- To get **PDF sheet music**, open the `.musicxml` in MuseScore or use the MuseScore CLI.  
-  Example:  
-  ```sh
-  musescore score.musicxml -o sheet.pdf
+- To get **PDF sheet music**, open the `.musicxml` in MuseScore or use the MuseScore CLI:  
+```sh
+musescore score.musicxml -o sheet.pdf
         """
     )
