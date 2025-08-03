@@ -1,6 +1,8 @@
-streamlit
+streamlit>=1.14.0,<2
 yt-dlp
 pydub
 music21
 ffmpeg-python
+scikit-learn==1.5.1
 basic-pitch[coreml]==0.4.0
+coremltools>=6.3.0,<7.0.0
