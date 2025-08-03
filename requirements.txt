@@ -1,8 +1,6 @@
-streamlit>=1.10
+streamlit
 yt-dlp
 pydub
 music21
 ffmpeg-python
-basic-pitch[tf]==0.4.0
-# if tensorflow compatibility breaks, try pinning:
-# tensorflow==2.11.1
+basic-pitch[coreml]==0.4.0
