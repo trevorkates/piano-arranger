@@ -1,24 +1,22 @@
-# Python artifacts
-__pycache__/
-*.py[cod]
-*.egg-info/
-*.egg
-.Python
-env/
-.venv/
-venv/
-*.pkl
+# Build / packaging
+*.whl
+*.tar.gz
 
-# OS
-.DS_Store
+# Test / tooling caches
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
 
-# Virtual envs
-*.env
+# Streamlit state
+.streamlit/
 
-# Output / uploads
-uploads/
-outputs/
+# Logs
+*.log
 
-# Editor
-.vscode/
-.idea/
+# Sensitive local config
+.env.local
+.env.*.local
+
+# Music21 cache (if it creates one)
+# (optional; depends on your usage)
