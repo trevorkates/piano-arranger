@@ -165,3 +165,4 @@ if audio_path:
   Example:  
   ```sh
   musescore score.musicxml -o sheet.pdf
+        """
