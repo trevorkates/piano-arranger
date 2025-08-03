@@ -4,7 +4,7 @@ import uuid
 import shutil
 import tempfile
 
-from basic_pitch.inference import predict_and_save, load_model
+from basic_pitch.inference import predict_and_save
 from pydub import AudioSegment
 import yt_dlp
 from music21 import converter
