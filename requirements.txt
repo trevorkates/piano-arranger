@@ -1,0 +1,6 @@
+streamlit
+basic-pitch[onnx]
+yt-dlp
+pydub
+music21
+ffmpeg-python
