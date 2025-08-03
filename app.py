@@ -4,7 +4,7 @@ import uuid
 import shutil
 import tempfile
 
-from basic_pitch.inference import predict_and_save
+from basic_pitch.inference import predict_and_save, load_model
 from pydub import AudioSegment
 import yt_dlp
 from music21 import converter
@@ -72,9 +72,11 @@ if input_path:
     pdf_out = midi_out.replace(".mid", ".pdf")
 
     with st.spinner("🎼 Transcribing to MIDI..."):
+        model = load_model()
         predict_and_save(
             [input_path],
             output_directory=OUTPUT_DIR,
+            model_or_model_path=model,
             save_midi=True,
             save_model_outputs=False,
             save_notes=False,
